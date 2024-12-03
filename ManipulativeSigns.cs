@@ -1,6 +1,6 @@
 ﻿namespace The_PackingHub___algorithm
 {
-    internal class ManipulativeSigns
+    public class ManipulativeSigns
     {
         public bool Fragile { get; }
         public bool Chemically_active { get; }

@@ -1,6 +1,6 @@
 ﻿namespace The_PackingHub___algorithm
 {
-    internal class Vector3
+    public class Vector3
     {
         public float X { get; set; }
         public float Y { get; set; }

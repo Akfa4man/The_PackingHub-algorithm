@@ -1,39 +1,79 @@
 ﻿namespace The_PackingHub___algorithm
 {
-    internal class BestFitPacker
+    public static class BestFitPacker
     {
-        public static Container Pack(Container container, List<Cargo> cargos)
+        public static float Step
         {
-            //Разделение грузов на "особые" и "обычные"
-            List<Cargo> specialCargos = cargos.Where(c => c.Signs.Chemically_active || c.Signs.Flammable).ToList();
-            List<Cargo> regularCargos = cargos.Where(c => !c.Signs.Chemically_active && !c.Signs.Flammable).ToList();
-
-            // Попытка укладки с учетом особых грузов
-            Container containerWithSpecialHandling = PackWithSpecialHandling(container, specialCargos, regularCargos);
-
-            //Если укладка с учетом особых грузов не удалась, используем обычную укладку
-            if (containerWithSpecialHandling == null || containerWithSpecialHandling.GetPackedCargos.Count != cargos.Count)
+            get => step;
+            set
             {
-                return PackWithoutSpecialHandling(container, cargos);
+                if (value < 0f) throw new ArgumentOutOfRangeException("Значение step отрицательное!");
+                step = value;
+            }
+        }
+        private static float step = -1;
+
+        public static Container Pack(Container container, List<Cargo> cargos, Route route)
+        {
+            // Проверка на соответствие адресов
+            ValidateAddresses(cargos, route);
+
+            // Сортируем грузы по маршруту доставки
+            var sortedCargos = SortCargos(cargos, route);
+
+            // Укладываем с учетом манипуляционных признаков
+            Container packedContainer = PackWithSpecialHandling(container, sortedCargos);
+
+            if (packedContainer == null || packedContainer.GetPackedCargos.Count != cargos.Count)
+            {
+                // Если не удалось, пробуем без учета специальных правил
+                return PackWithoutSpecialHandling(container, sortedCargos);
             }
 
-            return containerWithSpecialHandling;
+            return packedContainer;
         }
 
-        private static Container PackWithSpecialHandling(Container container, List<Cargo> specialCargos, List<Cargo> regularCargos)
+        private static void ValidateAddresses(List<Cargo> cargos, Route route)
+        {
+            var routeAddresses = route.Addresses.ToHashSet();
+            var cargoAddresses = cargos.Select(c => c.DeliveryAddress).ToHashSet();
+
+            // Проверяем, что все адреса грузов есть в маршруте
+            foreach (var cargoAddress in cargoAddresses)
+            {
+                if (!routeAddresses.Contains(cargoAddress))
+                {
+                    throw new InvalidOperationException($"Адрес {cargoAddress.Name} из грузов отсутствует в маршруте!");
+                }
+            }
+
+            // Проверяем, есть ли адреса в маршруте, по которым ничего не нужно доставлять
+            foreach (var routeAddress in routeAddresses)
+            {
+                if (!cargoAddresses.Contains(routeAddress))
+                {
+                    Console.WriteLine($"Предупреждение: В маршруте указан адрес {routeAddress.Name}, по которому нет доставки грузов.");
+                }
+            }
+        }
+
+        private static Container PackWithSpecialHandling(Container container, List<Cargo> cargos)
         {
             Container tempContainer = new Container(container.Length, container.Width, container.Height, container.WallThickness, container.Weight);
             List<Cargo> packedCargos = new List<Cargo>();
 
-            //Укладка "особых" грузов с разделением "обычными"
-            foreach (var specialCargo in specialCargos)
+            foreach (var cargo in cargos)
             {
                 bool placed = false;
-                foreach (var (length, width, height) in specialCargo.GetOrientations())
-                {
-                    var orientedCargo = new Cargo(length, width, height, specialCargo.Weight, specialCargo.Signs) { Name = specialCargo.Name };
 
-                    Vector3 bestPosition = FindBestPositionWithSpecialHandling(tempContainer, orientedCargo, packedCargos);
+                foreach (var (length, width, height) in cargo.GetOrientations())
+                {
+                    var orientedCargo = new Cargo(length, width, height, cargo.Weight, cargo.Signs, cargo.DeliveryAddress) { Name = cargo.Name };
+
+                    Vector3 bestPosition = cargo.Signs.Chemically_active || cargo.Signs.Flammable
+                        ? FindBestPositionWithSpecialHandling(tempContainer, orientedCargo, packedCargos)
+                        : FindBestPosition(tempContainer, orientedCargo);
+
                     if (bestPosition != null)
                     {
                         tempContainer.AddCargo(orientedCargo, bestPosition);
@@ -45,54 +85,6 @@
 
                 if (!placed)
                 {
-                    //Если не удалось разместить "особый" груз, возвращаем null
-                    return null;
-                }
-
-                //Попытка разместить "обычный" груз после "особого"
-                if (regularCargos.Count > 0)
-                {
-                    var regularCargo = regularCargos[0];
-                    placed = false;
-                    foreach (var (length, width, height) in regularCargo.GetOrientations())
-                    {
-                        var orientedCargo = new Cargo(length, width, height, regularCargo.Weight, regularCargo.Signs) { Name = regularCargo.Name };
-
-                        Vector3 bestPosition = FindBestPosition(tempContainer, orientedCargo);
-                        if (bestPosition != null)
-                        {
-                            tempContainer.AddCargo(orientedCargo, bestPosition);
-                            packedCargos.Add(orientedCargo);
-                            regularCargos.RemoveAt(0);
-                            placed = true;
-                            break;
-                        }
-                    }
-                    //Если не удалось разместить "обычный" груз, продолжаем без него
-                }
-            }
-
-            //Укладка оставшихся "обычных" грузов
-            foreach (var regularCargo in regularCargos)
-            {
-                bool placed = false;
-                foreach (var (length, width, height) in regularCargo.GetOrientations())
-                {
-                    var orientedCargo = new Cargo(length, width, height, regularCargo.Weight, regularCargo.Signs) { Name = regularCargo.Name };
-
-                    Vector3 bestPosition = FindBestPosition(tempContainer, orientedCargo);
-                    if (bestPosition != null)
-                    {
-                        tempContainer.AddCargo(orientedCargo, bestPosition);
-                        packedCargos.Add(orientedCargo);
-                        placed = true;
-                        break;
-                    }
-                }
-
-                if (!placed)
-                {
-                    //Если не удалось разместить "обычный" груз, возвращаем null
                     return null;
                 }
             }
@@ -102,16 +94,16 @@
 
         private static Container PackWithoutSpecialHandling(Container container, List<Cargo> cargos)
         {
-            var sortedCargos = SortCargos(cargos);
-
-            foreach (var cargo in sortedCargos)
+            foreach (var cargo in cargos)
             {
                 bool placed = false;
+
                 foreach (var (length, width, height) in cargo.GetOrientations())
                 {
-                    var orientedCargo = new Cargo(length, width, height, cargo.Weight, cargo.Signs) { Name = cargo.Name };
+                    var orientedCargo = new Cargo(length, width, height, cargo.Weight, cargo.Signs, cargo.DeliveryAddress) { Name = cargo.Name };
 
                     Vector3 bestPosition = FindBestPosition(container, orientedCargo);
+
                     if (bestPosition != null)
                     {
                         container.AddCargo(orientedCargo, bestPosition);
@@ -122,39 +114,32 @@
 
                 if (!placed)
                 {
-                    Console.WriteLine($"Cargo {cargo.Length}x{cargo.Width}x{cargo.Height} could not be placed.");
+                    return null;
                 }
             }
 
             return container;
         }
 
-        private static Vector3 FindBestPositionWithSpecialHandling(Container container, Cargo cargo, List<Cargo> packedCargos)
+        public static Vector3 FindBestPositionWithSpecialHandling(Container container, Cargo cargo, List<Cargo> packedCargos)
         {
+            if (step == -1) throw new InvalidOperationException("Переменной step не назначено значение!");
             Vector3 bestPosition = null;
             float minRemainingVolume = float.MaxValue;
-            float step = 0.01f;
 
-            for (float z = 0; z < container.InnerHeight; z = MathF.Round(z + step, 2))
+            for (float z = 0; z < container.InnerHeight; z += step)
             {
-                for (float y = 0; y < container.InnerWidth; y = MathF.Round(y + step, 2))
+                for (float y = 0; y < container.InnerWidth; y += step)
                 {
-                    for (float x = 0; x < container.InnerLength; x = MathF.Round(x + step, 2))
+                    for (float x = 0; x < container.InnerLength; x += step)
                     {
                         Vector3 position = new Vector3(x, y, z);
+
                         if (container.AddCargo(cargo, position))
                         {
-                            //Проверка на соседство с "особыми" грузами
-                            bool hasSpecialNeighbor = false;
-                            foreach (var packed in packedCargos)
-                            {
-                                if ((packed.Signs.Chemically_active || packed.Signs.Flammable) &&
-                                    container.BoxesOverlap(cargo, position, packed, FindPosition(container, packed)))
-                                {
-                                    hasSpecialNeighbor = true;
-                                    break;
-                                }
-                            }
+                            bool hasSpecialNeighbor = packedCargos.Any(p =>
+                                (p.Signs.Chemically_active || p.Signs.Flammable) &&
+                                container.BoxesOverlap(cargo, position, p, FindPosition(container, p)));
 
                             if (!hasSpecialNeighbor)
                             {
@@ -179,40 +164,20 @@
             return bestPosition;
         }
 
-        private static Vector3 FindPosition(Container container, Cargo cargo)
+        public static Vector3 FindBestPosition(Container container, Cargo cargo)
         {
-            foreach (var packedCargo in container.GetPackedCargos)
-            {
-                if (packedCargo.Item1 == cargo)
-                {
-                    return packedCargo.Item2;
-                }
-            }
-            return null;
-        }
-
-        private static List<Cargo> SortCargos(List<Cargo> cargos)
-        {
-            return cargos
-                .OrderByDescending(c => c.Length * c.Width * c.Height) //Сначала объёмные
-                .ThenByDescending(c => c.Weight) //Затем тяжёлые
-                .ThenByDescending(c => !c.Signs.Fragile) //Затем хрупкие (false идет раньше true)
-                .ToList();
-        }
-
-        private static Vector3 FindBestPosition(Container container, Cargo cargo)
-        {
+            if (step == -1) throw new InvalidOperationException("Переменной step не назначено значение!");
             Vector3 bestPosition = null;
             float minRemainingVolume = float.MaxValue;
-            float step = 0.01f;
 
-            for (float z = 0; z < container.InnerHeight; z = MathF.Round(z + step, 2))
+            for (float z = 0; z < container.InnerHeight; z += step)
             {
-                for (float y = 0; y < container.InnerWidth; y = MathF.Round(y + step, 2))
+                for (float y = 0; y < container.InnerWidth; y += step)
                 {
-                    for (float x = 0; x < container.InnerLength; x = MathF.Round(x + step, 2))
+                    for (float x = 0; x < container.InnerLength; x += step)
                     {
                         Vector3 position = new Vector3(x, y, z);
+
                         if (container.AddCargo(cargo, position))
                         {
                             float remainingVolume = CalculateRemainingVolume(container);
@@ -231,13 +196,28 @@
             return bestPosition;
         }
 
+        public static List<Cargo> SortCargos(List<Cargo> cargos, Route route)
+        {
+            var addressOrder = route.Addresses
+                .Select((address, index) => new { address, index })
+                .ToDictionary(a => a.address, a => a.index);
+
+            return cargos
+                .OrderBy(c => addressOrder.ContainsKey(c.DeliveryAddress) ? addressOrder[c.DeliveryAddress] : int.MaxValue)
+                .ThenByDescending(c => c.Length * c.Width * c.Height)
+                .ThenByDescending(c => c.Weight)
+                .ThenByDescending(c => !c.Signs.Fragile)
+                .ToList();
+        }
+
+        private static Vector3 FindPosition(Container container, Cargo cargo)
+        {
+            return container.GetPackedCargos.FirstOrDefault(p => p.Item1 == cargo)?.Item2;
+        }
+
         private static float CalculateRemainingVolume(Container container)
         {
-            float usedVolume = 0;
-            foreach (var packedCargo in container.GetPackedCargos)
-            {
-                usedVolume += packedCargo.Item1.Length * packedCargo.Item1.Width * packedCargo.Item1.Height;
-            }
+            float usedVolume = container.GetPackedCargos.Sum(p => p.Item1.Length * p.Item1.Width * p.Item1.Height);
             return container.InnerLength * container.InnerWidth * container.InnerHeight - usedVolume;
         }
     }

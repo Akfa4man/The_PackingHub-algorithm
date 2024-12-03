@@ -1,6 +1,6 @@
 ﻿namespace The_PackingHub___algorithm
 {
-    internal class Container
+    public class Container
     {
         public float Length { get; }
         public float Width { get; }
